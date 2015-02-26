@@ -8,7 +8,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include "sqlLiteController.h"
+
+#define FILES_FOLDER "userFiles/"
 
 void *connection_handler(void *socket_desc);
 
@@ -103,9 +106,13 @@ void *connection_handler(void *socket_desc)
 			case 1:
 				if(strcmp(buffer, "y") == 0){
 					state = 2;
-
+					bzero(buffer, 256);
+					receiveMessage(clientSocket, buffer, 256);
+					int fsize = atoi(buffer);
+					bzero(buffer, 256);
+					receiveMessage(clientSocket, buffer, 256);
 //					processTheMessageToClient(clientSocket, "Choose file and the sending will start automatically");
-					receiveFile(clientSocket);
+					receiveFile(clientSocket, fsize, buffer);
 				}
 				break;
 			}
@@ -283,13 +290,20 @@ void receiveMessage(int serverSocket, char* realMessage, int size){
 	}
 }
 
-void receiveFile(int clientSocket){
+void receiveFile(int clientSocket, int fsize, char* filename){
 	char buffer[256];
 	bzero(buffer, 256);
 	FILE *fp;
 	int n;
 
-	fp = fopen("fileOne.txt", "a+b");
+	mkdir(FILES_FOLDER, S_IRWXU | S_IRWXG);
+
+	char fullFilePath[256];
+	bzero(fullFilePath, 256);
+	strcpy(fullFilePath, FILES_FOLDER);
+	strcat(fullFilePath, filename);
+
+	fp = fopen(fullFilePath, "a+b");
 	if (fp == NULL)
 	{
 		printf("File not found!\n");
@@ -301,8 +315,7 @@ void receiveFile(int clientSocket){
 	}
 
 	/* Time to Receive the File */
-
-	do{
+	while(fsize>0){
 		bzero(buffer,256);
 		n = read(clientSocket,buffer,256);
 		if (n < 0) error("ERROR reading from socket");
@@ -310,12 +323,8 @@ void receiveFile(int clientSocket){
 			fwrite(buffer, sizeof(char), strlen(buffer), fp);
 		}
 
-		puts("done");
-//		if (n < 0) error("ERROR writing in file");
-
-//		n = write(clientSocket,"I am getting your file...",25);
-//		if (n < 0) error("ERROR writing to socket");
-	} while (n>0);
+		fsize -= n;
+	}
 
 	fclose(fp);
 	return;

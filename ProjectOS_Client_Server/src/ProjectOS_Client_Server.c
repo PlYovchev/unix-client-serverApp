@@ -15,6 +15,6 @@
 int main(void) {
 	puts("!!!Hello World!!!"); /* prints !!!Hello World!!! */
 	//startServerThread(5678);
-	startServer(5691);
+	startServer(5697);
 	return EXIT_SUCCESS;
 }

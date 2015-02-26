@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
     struct hostent *server;
 
     char buffer[256];
-    portno = 5691;
+    portno = 5697;
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
         error("ERROR opening socket");
@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
 			scanf("%s", &message);
 			processTheMessageToServer(sockfd, message);
 			if(strcmp(message, "y") == 0){
+				puts("Enter file path:");
 				bzero(message,256);
 				scanf("%s", &message);
 				processTheFileToServer(sockfd,message);
@@ -156,71 +157,7 @@ void receiveMessage(int serverSocket, char* realMessage, int sizeOfBuffer){
 	}
 }
 
-void parseMessage(int serverSocket){
-	int atChar = 0;
-	char realMessage[256];
-	bzero(realMessage, 256);
-	while(1){
-		int endProcessing = 0;
-		char buffer[13];
-		char code[2];
-		char size;
-		bzero(buffer, 13);
-		bzero(code, 2);
-		read(serverSocket, buffer, 13);
-		char* msgToParse = buffer;
-		memcpy(code, msgToParse, 2);
-		msgToParse += 2;
-		size = msgToParse[0];
-		msgToParse += 1;
-
-		if(code[1] == 'a'){
-			int realSize = size - 48;
-			char partOfMsg[realSize];
-			bzero(partOfMsg, realSize);
-			memcpy(partOfMsg, msgToParse, realSize);
-			int i = 0;
-			for (i = atChar; i < atChar + realSize; i++) {
-				realMessage[i] = partOfMsg[i - atChar];
-			}
-			endProcessing = 1;
-			atChar += realSize;
-		}
-		else if(code[1] == 'e'){
-			char partOfMsg[10];
-			bzero(partOfMsg, 10);
-			memcpy(partOfMsg, msgToParse, 10);
-			int i = 0;
-			for (i = atChar; i < atChar + 10; i++) {
-				realMessage[i] = partOfMsg[i - atChar];
-			}
-			endProcessing = 1;
-			atChar += 10;
-		}
-		else if(code[1] == 'c'){
-			char partOfMsg[10];
-			bzero(partOfMsg, 10);
-			memcpy(partOfMsg, msgToParse, 10);
-			int i = 0;
-			for (i = atChar; i < atChar + 10; i++) {
-				realMessage[i] = partOfMsg[i - atChar];
-			}
-			atChar += 10;
-			endProcessing = 0;
-		}
-
-		if(endProcessing == 1){
-			realMessage[atChar] = '\0';
-			if(strcmp(realMessage, "enterUsr") == 0){
-				puts("success");
-			}
-			puts(realMessage);
-			atChar = 0;
-		}
-	}
-}
-
-void processTheMessageToServer(int clientSocket, char* message){
+void processTheMessageToServer(int serverSocket, char* message){
 	while(1){
 		int endSending = 0;
 		if(strlen(message) > 10){
@@ -233,7 +170,7 @@ void processTheMessageToServer(int clientSocket, char* message){
 				msgToSend[i] = message[i - 3];
 			}
 
-			write(clientSocket, msgToSend, 13);
+			write(serverSocket, msgToSend, 13);
 			endSending = 0;
 		}
 		else if(strlen(message) < 10){
@@ -250,7 +187,7 @@ void processTheMessageToServer(int clientSocket, char* message){
 				msgToSend[i] = 'e';
 			}
 
-			write(clientSocket, msgToSend, 13);
+			write(serverSocket, msgToSend, 13);
 			endSending = 1;
 		}
 		else if(strlen(message) == 10){
@@ -263,7 +200,7 @@ void processTheMessageToServer(int clientSocket, char* message){
 				msgToSend[i] = message[i - 3];
 			}
 
-			write(clientSocket, msgToSend, 13);
+			write(serverSocket, msgToSend, 13);
 			endSending = 1;
 		}
 
@@ -280,50 +217,56 @@ int processTheFileToServer(int serverSocket, char* filename){
 	FILE *pf;
 	char buffer[256];
 	int fsize = 0;
-	pf = fopen("/home/plt3ch/fileOneTest.txt", "rb");
+	pf = fopen(filename, "rb");
 
 	if (pf == NULL)
 	{
-	    printf("File not found!\n");
-	    return 1;
+		printf("File not found!\n");
+		char* sizeInStrFormat = "0";
+		processTheMessageToServer(serverSocket, sizeInStrFormat);
+		return 1;
 	}
 	else
 	{
-	  //  printf("Found file %s\n", filename);
+		fseek(pf, 0, SEEK_END);
+		fsize = ftell(pf);
+		rewind(pf);
 
-	    fseek(pf, 0, SEEK_END);
-	    fsize = ftell(pf);
-	    rewind(pf);
-
-	    printf("File contains %ld bytes!\n", fsize);
-	    printf("Sending the file now");
+		printf("File contains %ld bytes!\n", fsize);
+		printf("Sending the file now\n");
+		char sizeInStrFormat[15];
+		sprintf(sizeInStrFormat, "%d", fsize);
+		processTheMessageToServer(serverSocket, sizeInStrFormat);
+		char* filenamePos;
+		filenamePos = strrchr(filename,'/');
+		processTheMessageToServer(serverSocket, filenamePos + 1);
 	}
 
 	while(1){
 		bzero(buffer,sizeof(buffer));
 		int bytes_read = fread(buffer, sizeof(char), sizeof(buffer), pf);
-		if (bytes_read == 0) // We're done reading from the file
+		if (bytes_read == 0){ // We're done reading from the file
 			break;
+		}
+
 
 		if (bytes_read < 0)
 		{
 			error("ERROR reading from file");
 		}
-//			write(clientSocket, msgToSend, 13);
 
-		 void *p = buffer;
-		 while (bytes_read > 0)
-		 {
-			 int bytes_written = write(serverSocket, p, bytes_read);
-			 puts("working");
-			 if (bytes_written <= 0)
-			 {
-				 error("ERROR writing to socket\n");
-			 }
+		void *p = buffer;
+		while (bytes_read > 0)
+		{
+			int bytes_written = write(serverSocket, p, bytes_read);
+			if (bytes_written <= 0)
+			{
+				error("ERROR writing to socket\n");
+			}
 
-			 bytes_read -= bytes_written;
-			 p += bytes_written;
-		 }
+			bytes_read -= bytes_written;
+			p += bytes_written;
+		}
 	}
 
 	sleep(1);
