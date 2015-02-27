@@ -16,6 +16,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <sys/stat.h>
+
+#define FILES_FOLDER "clientFiles/"
 
 void error(const char *msg)
 {
@@ -30,7 +33,12 @@ int main(int argc, char *argv[])
     struct hostent *server;
 
     char buffer[256];
-    portno = 5697;
+//    if(argc < 1){
+//    	error("No port provided!");
+//    }
+
+    portno = 5702;
+
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
         error("ERROR opening socket");
@@ -64,6 +72,7 @@ int main(int argc, char *argv[])
     		char message[256];
 			bzero(message,256);
 			scanf("%s", &message);
+			__fpurge(stdin);
 			processTheMessageToServer(sockfd, message);
 			if(strcmp(message, "y") == 0){
 				puts("Enter file path:");
@@ -71,6 +80,22 @@ int main(int argc, char *argv[])
 				scanf("%s", &message);
 				processTheFileToServer(sockfd,message);
 			}
+    	}
+    	else if(checkForCommand(buffer) == 3){
+    		char message[256];
+    		bzero(message,256);
+    		scanf("%s", message);
+    		__fpurge(stdin);
+    		processTheMessageToServer(sockfd, message);
+    		if(strcmp(message, "y") == 0){
+    			bzero(buffer,256);
+    			receiveMessage(sockfd, buffer, 256);
+    			int fsize = atoi(buffer);
+
+    			bzero(buffer,256);
+    			receiveMessage(sockfd, buffer, 256);
+    			receiveFile(sockfd, fsize, buffer);
+    		}
     	}
     	else{
     		puts(buffer);
@@ -90,6 +115,10 @@ int checkForCommand(char* message){
 
 	if(strcmp(message, "sndFQ") == 0){
 		shouldItWaitForReponse = 2;
+	}
+
+	if(strcmp(message, "recFL") == 0){
+		shouldItWaitForReponse = 3;
 	}
 
 	return shouldItWaitForReponse;
@@ -215,7 +244,7 @@ void processTheMessageToServer(int serverSocket, char* message){
 
 int processTheFileToServer(int serverSocket, char* filename){
 	FILE *pf;
-	char buffer[256];
+	unsigned char buffer[256];
 	int fsize = 0;
 	pf = fopen(filename, "rb");
 
@@ -269,9 +298,56 @@ int processTheFileToServer(int serverSocket, char* filename){
 		}
 	}
 
+	puts("File sent");
+
 	sleep(1);
 
 	fclose(pf);
 	return 0;
 }
 
+void receiveFile(int serverSocket, int fsize, char* filename){
+	unsigned char buffer[256];
+	bzero(buffer, 256);
+	FILE *fp;
+	int n;
+	int sizeOfBuffer = 256;
+
+	mkdir(FILES_FOLDER, S_IRWXU | S_IRWXG);
+
+	char fullFilePath[256];
+	bzero(fullFilePath, 256);
+	strcpy(fullFilePath, FILES_FOLDER);
+	strcat(fullFilePath, filename);
+
+	fp = fopen(fullFilePath, "wb");
+	if (fp == NULL)
+	{
+		printf("File not found!\n");
+		//return;
+	}
+	else
+	{
+		//printf("Found file %s\n", filename);
+	}
+
+	/* Time to Receive the File */
+	while(fsize>0){
+		if(fsize < 256){
+			sizeOfBuffer = fsize;
+		}
+		bzero(buffer,256);
+		n = read(serverSocket,buffer,sizeOfBuffer);
+		if (n < 0) error("ERROR reading from socket");
+		if(n > 0){
+			fwrite(buffer, sizeof(char), strlen(buffer), fp);
+		}
+
+		fsize -= n;
+	}
+
+	puts("File received!");
+
+	fclose(fp);
+	return;
+}

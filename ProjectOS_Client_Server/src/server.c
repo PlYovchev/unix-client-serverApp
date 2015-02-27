@@ -12,36 +12,43 @@
 #include "sqlLiteController.h"
 
 #define FILES_FOLDER "userFiles/"
+#define USERS_THREASHOLD 100
+
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t locks[USERS_THREASHOLD];
+char *connectedUsers[USERS_THREASHOLD];
+int connectedAndDisconnectedUsers[USERS_THREASHOLD];
 
 void *connection_handler(void *socket_desc);
-
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
+void *download_handler(void* currentUserIndex);
 
 int startServer(int portno)
 {
      int sockfd, newsockfd, *new_sock, c;
-     socklen_t clilen;
      struct sockaddr_in serv_addr, cli_addr;
-     int n;
+
      if (portno == 0) {
          fprintf(stderr,"ERROR, no port provided\n");
          exit(1);
      }
+
      sockfd = socket(AF_INET, SOCK_STREAM, 0);
      if (sockfd < 0)
         error("ERROR opening socket");
+
      bzero((char *) &serv_addr, sizeof(serv_addr));
+
      serv_addr.sin_family = AF_INET;
      serv_addr.sin_addr.s_addr = INADDR_ANY;
      serv_addr.sin_port = htons(portno);
+
      if (bind(sockfd, (struct sockaddr *) &serv_addr,
-              sizeof(serv_addr)) < 0)
+              sizeof(serv_addr)) < 0){
               error("ERROR on binding");
+     }
+
      listen(sockfd,5);
+
      c = sizeof(struct sockaddr_in);
      while( (newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, (socklen_t*)&c)) ){
     	 pthread_t sniffer_thread;
@@ -50,10 +57,6 @@ int startServer(int portno)
 
     	 pthread_create( &sniffer_thread , 0 ,  connection_handler , (void*) new_sock);
     	 pthread_detach(sniffer_thread);
-    	 //Now join the thread , so that we dont terminate before the thread
-    	 //pthread_join( sniffer_thread , NULL);
-    	 // puts("Handler assigned");
-    	 // close(newsockfd);
      }
 
      return 0;
@@ -70,16 +73,39 @@ void *connection_handler(void *socket_desc)
 	char username[256];
 	short userFound = 0;
 	short state = 0;
+	int userIndex;
+
+	pthread_mutex_lock(&lock);
+	int i;
+	for (i = 0; i < USERS_THREASHOLD; i++) {
+		if(connectedAndDisconnectedUsers[i] == 0){
+			connectedAndDisconnectedUsers[i] = clientSocket;
+			userIndex = i;
+			pthread_mutex_t innerLock = PTHREAD_MUTEX_INITIALIZER;
+			locks[userIndex] = innerLock;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&lock);
 
 	//Send some messages to the client
 	processTheMessageToClient(clientSocket, "Greetings! I am your connection handler! Its my duty to communicate with you!\nSelect option:");
-
 	processTheMessageToClient(clientSocket, "1. Register\n2. Login");
 	processTheMessageToClient(clientSocket, "RegLog");
 
 	while(1){
 		bzero(buffer, 256);
-		receiveMessage(clientSocket, buffer, 256);
+		int n = receiveMessage(clientSocket, buffer, 256);
+		if(n == 1){
+			pthread_mutex_lock(&lock);
+			puts(username);
+			puts("End");
+			connectedAndDisconnectedUsers[userIndex] = 0;
+			connectedUsers[userIndex] = NULL;
+			pthread_mutex_unlock(&lock);
+			break;
+		}
+
 		if(userFound == 0){
 			if(buffer[0] == '1'){
 				registerForm(clientSocket);
@@ -90,12 +116,20 @@ void *connection_handler(void *socket_desc)
 					bzero(message, 256);
 					sprintf(message, "Hello, %s", username);
 					processTheMessageToClient(clientSocket, message);
-
 					userFound = 1;
+					connectedUsers[userIndex] = username;
+
+					pthread_t fileDownloaderThread;
+					int* newUserIndex = malloc(sizeof(int));
+				    *newUserIndex = userIndex;
+					pthread_create( &fileDownloaderThread , 0 ,  download_handler , (void*) newUserIndex);
+					pthread_detach(fileDownloaderThread);
+					sleep(1);
 				}
 			}
 		}
 
+		pthread_mutex_lock(&locks[userIndex]);
 		if(userFound == 1){
 			switch(state){
 			case 0:
@@ -107,21 +141,71 @@ void *connection_handler(void *socket_desc)
 				if(strcmp(buffer, "y") == 0){
 					state = 2;
 					bzero(buffer, 256);
-					receiveMessage(clientSocket, buffer, 256);
+					if(n!=1){
+						n = receiveMessage(clientSocket, buffer, 256);
+					}
 					int fsize = atoi(buffer);
+
 					bzero(buffer, 256);
-					receiveMessage(clientSocket, buffer, 256);
-//					processTheMessageToClient(clientSocket, "Choose file and the sending will start automatically");
-					receiveFile(clientSocket, fsize, buffer);
+					if(n!=1){
+						n = receiveMessage(clientSocket, buffer, 256);
+					}
+					if(n!=1){
+						n = receiveFile(clientSocket, fsize, buffer, userIndex);
+					}
 				}
 				break;
 			}
 		}
 
+		pthread_mutex_unlock(&locks[userIndex]);
 		usleep(500000);
 	}
 
 	free(socket_desc);
+	return 0;
+}
+
+void* download_handler(void* currentUserIndex){
+	int userIndex = *(int*)currentUserIndex;
+	char* username = connectedUsers[userIndex];
+
+	while(1){
+		pthread_mutex_lock(&lock);
+		if(connectedAndDisconnectedUsers[userIndex] == 0){
+			puts("end");
+			break;
+		}
+		pthread_mutex_unlock(&lock);
+
+		char* filenames[256];
+		int size = getFilenamesToDownLoad(username, filenames);
+		int i;
+		for (i = 0; i < size; i++) {
+			pthread_mutex_lock(&lock);
+			if(connectedAndDisconnectedUsers[userIndex] == 0){
+				puts("end");
+				break;
+			}
+			pthread_mutex_unlock(&lock);
+			pthread_mutex_lock(&locks[userIndex]);
+			int clientSocket = connectedAndDisconnectedUsers[userIndex];
+			processTheMessageToClient(clientSocket, "There are new files for yoy! Do you want to download them?(y/n)");
+			processTheMessageToClient(clientSocket, "recFL");
+			processTheFileToClient(clientSocket, filenames[i]);
+			pthread_mutex_unlock(&locks[userIndex]);
+
+			if(username != NULL){
+				char temp[256];
+				bzero(temp, 256);
+				strcpy(temp, filenames[i]);
+				deletePendingFilename(username, temp);
+			}
+		}
+
+		sleep(15);
+	}
+
 	return 0;
 }
 
@@ -131,13 +215,6 @@ void registerForm(int clientSocket){
 
 	usernameAndPasswordForm(clientSocket, username, password);
 	createUserAcc(username, password);
-
-	//realeasing the memory
-//	free(code);
-//	free(message);
-//	free(buffer);
-//	free(username);
-//	free(password);
 }
 
 int loginForm(int clientSocket, char* username){
@@ -172,7 +249,8 @@ void usernameAndPasswordForm(int clientSocket, char* username, char* password){
 	strcpy(password, buffer);
 }
 
-void processTheMessageToClient(int clientSocket, char* message){
+int processTheMessageToClient(int clientSocket, char* message){
+	int n = 0;
 	while(1){
 		int endSending = 0;
 		if(strlen(message) > 10){
@@ -185,7 +263,7 @@ void processTheMessageToClient(int clientSocket, char* message){
 				msgToSend[i] = message[i - 3];
 			}
 
-			write(clientSocket, msgToSend, 13);
+			n = write(clientSocket, msgToSend, 13);
 			endSending = 0;
 		}
 		else if(strlen(message) < 10){
@@ -202,7 +280,7 @@ void processTheMessageToClient(int clientSocket, char* message){
 				msgToSend[i] = 'e';
 			}
 
-			write(clientSocket, msgToSend, 13);
+			n = write(clientSocket, msgToSend, 13);
 			endSending = 1;
 		}
 		else if(strlen(message) == 10){
@@ -215,7 +293,7 @@ void processTheMessageToClient(int clientSocket, char* message){
 				msgToSend[i] = message[i - 3];
 			}
 
-			write(clientSocket, msgToSend, 13);
+			n = write(clientSocket, msgToSend, 13);
 			endSending = 1;
 		}
 
@@ -223,21 +301,26 @@ void processTheMessageToClient(int clientSocket, char* message){
 			message += 10;
 		}
 		else{
-			break;
+			return 0;
+		}
+
+		if(n < 0){
+			return 1;
 		}
 	}
 }
 
-void receiveMessage(int serverSocket, char* realMessage, int size){
+int receiveMessage(int serverSocket, char* realMessage, int size){
 	int atChar = 0;
-	while(1){
+	int n;
+	do{
 		int endProcessing = 0;
 		char buffer[13];
 		char code[2];
 		char size;
 		bzero(buffer, 13);
 		bzero(code, 2);
-		read(serverSocket, buffer, 13);
+		int n = read(serverSocket, buffer, 13);
 		char* msgToParse = buffer;
 		memcpy(code, msgToParse, 2);
 		msgToParse += 2;
@@ -285,13 +368,19 @@ void receiveMessage(int serverSocket, char* realMessage, int size){
 
 		if(endProcessing == 1){
 			realMessage[atChar] = '\0';
-			break;
+			return 0;
 		}
+	}while(n>0);
+
+	if(n <= 0){
+		return 1;
 	}
+
+	return 0;
 }
 
-void receiveFile(int clientSocket, int fsize, char* filename){
-	char buffer[256];
+int receiveFile(int clientSocket, int fsize, char* filename, int userIndex){
+	unsigned char buffer[256];
 	bzero(buffer, 256);
 	FILE *fp;
 	int n;
@@ -303,10 +392,10 @@ void receiveFile(int clientSocket, int fsize, char* filename){
 	strcpy(fullFilePath, FILES_FOLDER);
 	strcat(fullFilePath, filename);
 
-	fp = fopen(fullFilePath, "a+b");
+	fp = fopen(fullFilePath, "wb");
 	if (fp == NULL)
 	{
-		printf("File not found!\n");
+		printf("File not found!Rec\n");
 		//return;
 	}
 	else
@@ -327,5 +416,71 @@ void receiveFile(int clientSocket, int fsize, char* filename){
 	}
 
 	fclose(fp);
-	return;
+
+	insertFileToDownLoad(connectedUsers[userIndex], fullFilePath);
+	if(n<0){
+		return 1;
+	}
+	return 0;
+}
+
+int processTheFileToClient(int clientSocket, char* filename){
+	FILE *pf;
+	unsigned char buffer[256];
+	int fsize = 0;
+	pf = fopen(filename, "rb");
+	if (pf == NULL)
+	{
+		printf("File not foundProcess!\n");
+		char* sizeInStrFormat = "0";
+		processTheMessageToClient(clientSocket, sizeInStrFormat);
+		return 1;
+	}
+	else
+	{
+		fseek(pf, 0, SEEK_END);
+		fsize = ftell(pf);
+		rewind(pf);
+
+		printf("File contains %ld bytes!\n", fsize);
+		printf("Sending the file now\n");
+		char* filenamePos;
+		filenamePos = strrchr(filename,'/');
+		char sizeInStrFormat[15];
+		sprintf(sizeInStrFormat, "%d", fsize);
+
+		processTheMessageToClient(clientSocket, sizeInStrFormat);
+		processTheMessageToClient(clientSocket, filenamePos + 1);
+	}
+
+	while(1){
+		bzero(buffer,sizeof(buffer));
+		int bytes_read = fread(buffer, sizeof(char), sizeof(buffer), pf);
+		if (bytes_read == 0){ // We're done reading from the file
+			break;
+		}
+
+		if (bytes_read < 0)
+		{
+			error("ERROR reading from file");
+		}
+
+		void *p = buffer;
+		while (bytes_read > 0)
+		{
+			int bytes_written = write(clientSocket, p, bytes_read);
+			if (bytes_written <= 0)
+			{
+				error("ERROR writing to socket\n");
+			}
+
+			bytes_read -= bytes_written;
+			p += bytes_written;
+		}
+	}
+
+	sleep(1);
+
+	fclose(pf);
+	return 0;
 }

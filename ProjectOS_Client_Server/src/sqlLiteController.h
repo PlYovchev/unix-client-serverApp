@@ -11,5 +11,8 @@
 
 int createUserAcc(char* name, char* pass);
 int checkForAccount(char* name, char* password);
+int insertFileToDownLoad(char* senderName, char* filename);
+int getFilenamesToDownLoad(char* username, char** filenames);
+void deletePendingFilename(char* username, char* filenameToDelete);
 
 #endif /* SQLLITECONTROLLER_H_ */

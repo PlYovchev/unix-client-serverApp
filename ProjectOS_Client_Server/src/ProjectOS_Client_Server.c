@@ -12,9 +12,19 @@
 #include <stdlib.h>
 #include "StartThread.h"
 
-int main(void) {
-	puts("!!!Hello World!!!"); /* prints !!!Hello World!!! */
-	//startServerThread(5678);
-	startServer(5697);
+void error(const char *msg)
+{
+    perror(msg);
+    exit(1);
+}
+
+int main(int argc, char *argv[]) {
+//	if(argc < 1){
+//		error("No port provided!");
+//	}
+	puts("!!!Hello! Server started!!!"); /* prints !!!Hello World!!! */
+	printf("%d\n",argv[1]);
+	//startServerThread(5702);
+	startServer(5702);
 	return EXIT_SUCCESS;
 }
